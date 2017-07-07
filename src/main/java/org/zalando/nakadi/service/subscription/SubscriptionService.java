@@ -41,7 +41,7 @@ import org.zalando.nakadi.exceptions.runtime.InvalidCursorOperation;
 import org.zalando.nakadi.exceptions.runtime.NoEventTypeException;
 import org.zalando.nakadi.exceptions.runtime.NoSubscriptionException;
 import org.zalando.nakadi.exceptions.runtime.RepositoryProblemException;
-import org.zalando.nakadi.exceptions.runtime.ServiceTemporaryUnavailableException;
+import org.zalando.nakadi.exceptions.runtime.ServiceTemporarilyUnavailableException;
 import org.zalando.nakadi.exceptions.runtime.TooManyPartitionsException;
 import org.zalando.nakadi.exceptions.runtime.WrongInitialCursorsException;
 import org.zalando.nakadi.repository.EventTypeRepository;
@@ -51,8 +51,6 @@ import org.zalando.nakadi.security.Client;
 import org.zalando.nakadi.service.CursorConverter;
 import org.zalando.nakadi.service.CursorOperationsService;
 import org.zalando.nakadi.service.Result;
-import org.zalando.nakadi.service.subscription.state.StartingState;
-import org.zalando.nakadi.service.subscription.zk.OldSubscriptionFormatException;
 import org.zalando.nakadi.service.subscription.zk.SubscriptionClientFactory;
 import org.zalando.nakadi.service.subscription.zk.ZkSubscriptionClient;
 import org.zalando.nakadi.service.subscription.zk.ZkSubscriptionNode;
@@ -179,7 +177,7 @@ public class SubscriptionService {
     }
 
     public ItemsWrapper<SubscriptionEventTypeStats> getSubscriptionStat(final String subscriptionId)
-            throws InconsistentStateException, NoSuchSubscriptionException, ServiceTemporaryUnavailableException {
+            throws InconsistentStateException, NoSuchSubscriptionException, ServiceTemporarilyUnavailableException {
         final Subscription subscription;
         try {
             subscription = subscriptionRepository.getSubscription(subscriptionId);
@@ -192,7 +190,7 @@ public class SubscriptionService {
 
 
     private List<SubscriptionEventTypeStats> createSubscriptionStat(final Subscription subscription)
-            throws InconsistentStateException, ServiceTemporaryUnavailableException {
+            throws InconsistentStateException, ServiceTemporarilyUnavailableException {
 
         final List<EventType> eventTypes = subscription.getEventTypes().stream()
                 .map(Try.wrap(eventTypeRepository::findByName))
@@ -203,7 +201,7 @@ public class SubscriptionService {
         try {
             topicPartitions = loadPartitionEndStatistics(eventTypes);
         } catch (final ServiceUnavailableException ex) {
-            throw new ServiceTemporaryUnavailableException(ex);
+            throw new ServiceTemporarilyUnavailableException(ex);
         }
 
         final ZkSubscriptionClient subscriptionClient;
@@ -211,7 +209,7 @@ public class SubscriptionService {
             subscriptionClient = subscriptionClientFactory.createClient(
                     subscription, "subscription." + subscription.getId() + ".stats");
         } catch (final InternalNakadiException | NoSuchEventTypeException e) {
-            throw new ServiceTemporaryUnavailableException(e);
+            throw new ServiceTemporarilyUnavailableException(e);
         }
 
         final ZkSubscriptionNode zkSubscriptionNode = getZkSubscriptionNode(subscription, subscriptionClient);
@@ -223,13 +221,7 @@ public class SubscriptionService {
 
     private ZkSubscriptionNode getZkSubscriptionNode(
             final Subscription subscription, final ZkSubscriptionClient subscriptionClient) {
-        try {
-            return subscriptionClient.getZkSubscriptionNodeLocked();
-        } catch (OldSubscriptionFormatException ex) {
-            subscriptionClient.runLocked(() -> StartingState.initializeSubscriptionStructure(
-                    subscription, timelineService, converter, subscriptionClient));
-            return subscriptionClient.getZkSubscriptionNodeLocked();
-        }
+        return subscriptionClient.getZkSubscriptionNodeLocked();
     }
 
     private List<PartitionEndStatistics> loadPartitionEndStatistics(final Collection<EventType> eventTypes)
@@ -253,7 +245,7 @@ public class SubscriptionService {
             final ZkSubscriptionNode subscriptionNode,
             final ZkSubscriptionClient client,
             final List<PartitionEndStatistics> stats)
-            throws ServiceTemporaryUnavailableException, InconsistentStateException {
+            throws ServiceTemporarilyUnavailableException, InconsistentStateException {
 
         final Set<SubscriptionEventTypeStats.Partition> resultPartitions = new HashSet<>(stats.size());
         for (final PartitionEndStatistics stat : stats) {
@@ -261,7 +253,7 @@ public class SubscriptionService {
             if (!lastPosition.getEventType().equals(eventType.getName())) {
                 continue;
             }
-            Long distance;
+            final Long distance;
             if (subscriptionNode.containsPartition(lastPosition.getEventTypePartition())) {
                 final NakadiCursor currentPosition;
                 final SubscriptionCursorWithoutToken offset =
@@ -270,17 +262,12 @@ public class SubscriptionService {
                     currentPosition = converter.convert(offset);
                 } catch (final InternalNakadiException | NoSuchEventTypeException | InvalidCursorException |
                         ServiceUnavailableException e) {
-                    throw new ServiceTemporaryUnavailableException(e);
+                    throw new ServiceTemporarilyUnavailableException(e);
                 }
                 try {
                     distance = cursorOperationsService.calculateDistance(currentPosition, lastPosition);
                 } catch (final InvalidCursorOperation ex) {
-                    if (ex.getReason() == InvalidCursorOperation.Reason.INVERTED_TIMELINE_ORDER ||
-                            ex.getReason() == InvalidCursorOperation.Reason.INVERTED_OFFSET_ORDER) {
-                        distance = 0L;
-                    } else {
-                        throw new InconsistentStateException("Unexpected exception while calculating distance", ex);
-                    }
+                    throw new InconsistentStateException("Unexpected exception while calculating distance", ex);
                 }
             } else {
                 distance = null;
