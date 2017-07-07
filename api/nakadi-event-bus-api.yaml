@@ -745,7 +745,6 @@ paths:
           description: |
             Offset to query for unconsumed events. Depends on `partition` parameter. When present adds the property
             `unconsumed_events` to the response partition object.
-          type: string
       responses:
         '200':
           description: OK
@@ -818,7 +817,7 @@ paths:
               - if the `shift` provided leads to a cursor that is not yet existent, i.e. it's pointing to
               some cursor yet to be generated in the future.
             schema:
-              $ref: '#/definitions/Problem'
+              - $ref: '#/definitions/Problem'
 
   /subscriptions:
     post:
@@ -1890,13 +1889,13 @@ definitions:
       - final_cursor
     properties:
       initial_cursor:
-        $ref: "#/definitions/Cursor"
+        - $ref: "/definitions/Cursor"
       final_cursor:
-        $ref: "#/definitions/Cursor"
+        - $ref: "/definitions/Cursor"
 
   CursorDistanceResult:
     allOf:
-      - $ref: '#/definitions/CursorDistanceQuery'
+      - $ref: '/definitions/CursorDistanceQuery'
     required:
       - distance
     properties:
@@ -1905,7 +1904,7 @@ definitions:
         format: int64
         description: |
           Number of events between two offsets. Initial offset is exclusive. It's only zero when both provided offsets
-          are equal.
+          are equal. If the `final_cursor` is strictly smaller than the `initial_cursor` it results in client error.
 
   Cursor:
     required:
@@ -2044,14 +2043,13 @@ definitions:
         example: 'gizig'
         description: |
           The id of application owning the subscription.
-        minLength: 1
       event_types:
         type: array
         items:
           type: string
         description: |
           EventTypes to subscribe to.
-          The order is not important. Subscriptions that differ only by the order of EventTypes will be
+          The order is not important. Subscriptions that differ only be the order of EventTypes will be
           considered the same and will have the same id. The size of event_types list is limited by total number
           of partitions within these event types. Default limit for partition count is 100.
       consumer_group:
@@ -2061,7 +2059,6 @@ definitions:
           The value describing the use case of this subscription.
           In general that is an additional identifier used to differ subscriptions having the same
           owning_application and event_types.
-        minLength: 1
         default: 'default'
       created_at:
         type: string
@@ -2078,7 +2075,7 @@ definitions:
           - `begin` - read from the oldest available event.
           - `end` - read from the most recent offset.
           - `cursors` - read from cursors provided in `initial_cursors` property.
-          Applied when the client starts reading from a subscription.
+          Applied in the moment when client starts reading from a subscription.
         default: 'end'
       initial_cursors:
         type: array
@@ -2201,7 +2198,7 @@ definitions:
           Required when 'partition_resolution_strategy' is set to 'hash'. Must be absent otherwise.
           Indicates the fields used for evaluation the partition of Events of this type.
 
-          If this is set it MUST be a valid required field as defined in the schema.
+          If set it MUST be a valid required field as defined in the schema.
 
       default_statistic:
         $ref: '#/definitions/EventTypeStatistics'
@@ -2285,7 +2282,7 @@ definitions:
   EventTypeStatistics:
     type: object
     description: |
-      Operational statistics for an EventType. This data may be provided by users on Event Type
+      Operational statistics for an EventType. This data MUST be provided by users on Event Type
       creation. Nakadi uses this object in order to provide an optimal number of partitions from a throughput perspective.
 
     properties:

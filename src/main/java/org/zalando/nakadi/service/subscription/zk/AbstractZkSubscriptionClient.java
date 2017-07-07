@@ -47,15 +47,22 @@ public abstract class AbstractZkSubscriptionClient implements ZkSubscriptionClie
     private InterProcessSemaphoreMutex lock;
     private final String resetCursorPath;
     private final Logger log;
+    private final Map<String, String> topicToEventType;
 
     public AbstractZkSubscriptionClient(
             final String subscriptionId,
             final CuratorFramework curatorFramework,
-            final String loggingPath) {
+            final String loggingPath,
+            final Map<String, String> topicToEventType) {
         this.subscriptionId = subscriptionId;
         this.curatorFramework = curatorFramework;
+        this.topicToEventType = topicToEventType;
         this.resetCursorPath = getSubscriptionPath("/cursor_reset");
         this.log = LoggerFactory.getLogger(loggingPath + ".zk");
+    }
+
+    public Map<String, String> getTopicToEventType() {
+        return topicToEventType;
     }
 
     protected CuratorFramework getCurator() {
@@ -115,28 +122,48 @@ public abstract class AbstractZkSubscriptionClient implements ZkSubscriptionClie
         }
     }
 
+    /**
+     * Checks that version of topology/offsets representation is the same as expected.
+     *
+     * @param bytes
+     * @return true, if its same, false - if not, but can be migrated.
+     * @throws ForwardVersionNotAllowed In case of version can not be migrated.
+     */
+    protected abstract boolean checkTopologyVersion(byte[] bytes) throws ForwardVersionNotAllowed;
+
     @Override
-    public final boolean isSubscriptionCreatedAndInitialized() throws NakadiRuntimeException {
+    public final boolean isSubscriptionCreatedAndInitialized() throws ForwardVersionNotAllowed {
         // First step - check that state node was already written
         try {
             final String state = new String(getCurator().getData().forPath(getSubscriptionPath("/state")), UTF_8);
             if (!state.equals(STATE_INITIALIZED)) {
                 return false;
             }
-            return true;
         } catch (final KeeperException.NoNodeException ex) {
             return false;
+        } catch (final Exception e) {
+            throw new NakadiRuntimeException(e);
+        }
+        // Second step - check that version is supported.
+        try {
+            return checkTopologyVersion(getCurator().getData().forPath(getSubscriptionPath(NODE_TOPOLOGY)));
+        } catch (final RuntimeException e) {
+            throw e;
         } catch (final Exception e) {
             throw new NakadiRuntimeException(e);
         }
     }
 
     @Override
-    public final void fillEmptySubscription(final Collection<SubscriptionCursorWithoutToken> cursors) {
+    public final void fillEmptySubscription(final Collection<SubscriptionCursorWithoutToken> cursorsIn) {
         try {
-            // Delete root subscription node, if it was erroneously created
+            final Collection<SubscriptionCursorWithoutToken> cursors;
+            // Delete root subscription node
             if (null != getCurator().checkExists().forPath(getSubscriptionPath(""))) {
+                cursors = applyCommittedPosition(cursorsIn);
                 deleteSubscription();
+            } else {
+                cursors = cursorsIn;
             }
             getLog().info("Creating sessions root");
             getCurator().create()
@@ -331,7 +358,8 @@ public abstract class AbstractZkSubscriptionClient implements ZkSubscriptionClie
     }
 
     @Override
-    public final ZkSubscriptionNode getZkSubscriptionNodeLocked() throws SubscriptionNotInitializedException {
+    public final ZkSubscriptionNode getZkSubscriptionNodeLocked() throws SubscriptionNotInitializedException,
+            OldSubscriptionFormatException {
         final ZkSubscriptionNode subscriptionNode = new ZkSubscriptionNode();
         try {
             if (null == getCurator().checkExists().forPath(getSubscriptionPath(""))) {
@@ -425,4 +453,43 @@ public abstract class AbstractZkSubscriptionClient implements ZkSubscriptionClie
             throws Exception;
 
     protected abstract String getOffsetPath(EventTypePartition etp);
+
+    /**
+     * This part of code is used for migration purposes (when first client with new storage format is connected)
+     * It tries to restore old cursors from existing positions, and replaces them (no comparision is performed)
+     * TODO: After 4 days after migration this method and all calls to it should be removed.
+     * TODO: OldZkSubscriptionClient and topicToEventType mapping should be removed as well.
+     *
+     * @param cursors Cursors, that were calculated according to subscription initial position.
+     * @return Cursors from old storage, if they present anywhere.
+     */
+    private Collection<SubscriptionCursorWithoutToken> applyCommittedPosition(
+            final Collection<SubscriptionCursorWithoutToken> cursors) {
+        return applyCommittedPositionStatic(
+                cursors,
+                new OldZkSubscriptionClient(
+                        getSubscriptionId(), getCurator(), "subscriptions." + subscriptionId + ".cursor_migration",
+                        getTopicToEventType()));
+    }
+
+    private Collection<SubscriptionCursorWithoutToken> applyCommittedPositionStatic(
+            final Collection<SubscriptionCursorWithoutToken> cursors,
+            final AbstractZkSubscriptionClient oldClient) {
+        final List<SubscriptionCursorWithoutToken> result = new ArrayList<>();
+        for (final SubscriptionCursorWithoutToken c : cursors) {
+            SubscriptionCursorWithoutToken replacement;
+            try {
+                final byte[] data = getCurator().getData()
+                        .forPath(oldClient.getOffsetPath(c.getEventTypePartition()));
+                replacement = new SubscriptionCursorWithoutToken(
+                        c.getEventType(), c.getPartition(), new String(data, UTF_8));
+            } catch (final KeeperException.NoNodeException ex) {
+                replacement = null;
+            } catch (final Exception ex) {
+                throw new NakadiRuntimeException(ex);
+            }
+            result.add(null == replacement ? c : replacement);
+        }
+        return result;
+    }
 }

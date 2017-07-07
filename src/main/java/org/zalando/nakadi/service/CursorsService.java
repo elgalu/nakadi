@@ -32,6 +32,8 @@ import org.zalando.nakadi.repository.EventTypeRepository;
 import org.zalando.nakadi.repository.db.SubscriptionDbRepository;
 import org.zalando.nakadi.security.Client;
 import org.zalando.nakadi.service.subscription.model.Partition;
+import org.zalando.nakadi.service.subscription.state.StartingState;
+import org.zalando.nakadi.service.subscription.zk.OldSubscriptionFormatException;
 import org.zalando.nakadi.service.subscription.zk.SubscriptionClientFactory;
 import org.zalando.nakadi.service.subscription.zk.SubscriptionNotInitializedException;
 import org.zalando.nakadi.service.subscription.zk.ZkSubscriptionClient;
@@ -132,6 +134,10 @@ public class CursorsService {
 
         Partition[] partitions;
         try {
+            partitions = zkSubscriptionClient.listPartitions();
+        } catch (final OldSubscriptionFormatException ex) {
+            zkSubscriptionClient.runLocked(() -> StartingState.initializeSubscriptionStructure(
+                    subscription, timelineService, cursorConverter, zkSubscriptionClient));
             partitions = zkSubscriptionClient.listPartitions();
         } catch (final SubscriptionNotInitializedException ex) {
             partitions = new Partition[]{};

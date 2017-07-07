@@ -15,7 +15,6 @@ import org.zalando.nakadi.exceptions.NakadiRuntimeException;
 import org.zalando.nakadi.service.BlacklistService;
 import org.zalando.nakadi.service.CursorConverter;
 import org.zalando.nakadi.service.CursorTokenService;
-import org.zalando.nakadi.service.EventStreamWriter;
 import org.zalando.nakadi.service.subscription.model.Partition;
 import org.zalando.nakadi.service.subscription.model.Session;
 import org.zalando.nakadi.service.subscription.state.CleanupState;
@@ -47,7 +46,6 @@ public class StreamingContext implements SubscriptionStreamer {
     private final CursorConverter cursorConverter;
     private final Subscription subscription;
     private final MetricRegistry metricRegistry;
-    private final EventStreamWriter writer;
     private State currentState = new DummyState();
     private ZKSubscription clientListChanges;
 
@@ -71,7 +69,6 @@ public class StreamingContext implements SubscriptionStreamer {
         this.cursorConverter = builder.cursorConverter;
         this.subscription = builder.subscription;
         this.metricRegistry = builder.metricRegistry;
-        this.writer = builder.writer;
     }
 
     public TimelineService getTimelineService() {
@@ -110,10 +107,6 @@ public class StreamingContext implements SubscriptionStreamer {
         return metricRegistry;
     }
 
-    public EventStreamWriter getWriter() {
-        return this.writer;
-    }
-
     @Override
     public void stream() throws InterruptedException {
         // bugfix ARUHA-485
@@ -150,18 +143,13 @@ public class StreamingContext implements SubscriptionStreamer {
     public void switchState(final State newState) {
         this.addTask(() -> {
             log.info("Switching state from " + currentState.getClass().getSimpleName());
-            // There is a problem with onExit call - it can not throw exceptions, otherwise it won't be possible
-            // to finish state correctly. In order to avoid it in future state will be switched even in case of
-            // exception.
-            try {
-                currentState.onExit();
-            } finally {
-                currentState = newState;
+            currentState.onExit();
 
-                log.info("Switching state to " + currentState.getClass().getSimpleName());
-                currentState.setContext(this, loggingPath);
-                currentState.onEnter();
-            }
+            currentState = newState;
+
+            log.info("Switching state to " + currentState.getClass().getSimpleName());
+            currentState.setContext(this, loggingPath);
+            currentState.onEnter();
         });
     }
 
@@ -243,7 +231,6 @@ public class StreamingContext implements SubscriptionStreamer {
         private Subscription subscription;
         private MetricRegistry metricRegistry;
         private TimelineService timelineService;
-        private EventStreamWriter writer;
 
         public Builder setOut(final SubscriptionOutput out) {
             this.out = out;
@@ -322,11 +309,6 @@ public class StreamingContext implements SubscriptionStreamer {
 
         public Builder setMetricRegistry(final MetricRegistry metricRegistry) {
             this.metricRegistry = metricRegistry;
-            return this;
-        }
-
-        public Builder setWriter(final EventStreamWriter writer) {
-            this.writer = writer;
             return this;
         }
 

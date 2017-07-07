@@ -1,8 +1,6 @@
 package org.zalando.nakadi.partitioning;
 
 import org.json.JSONObject;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 import org.zalando.nakadi.domain.EventCategory;
 import org.zalando.nakadi.domain.EventType;
 import org.zalando.nakadi.exceptions.InvalidPartitionKeyFieldsException;
@@ -12,24 +10,12 @@ import org.zalando.nakadi.util.JsonPathAccess;
 import org.zalando.nakadi.validation.JsonSchemaEnrichment;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 import static java.lang.Math.abs;
 
-@Component
 public class HashPartitionStrategy implements PartitionStrategy {
 
     private static final String DATA_PATH_PREFIX = JsonSchemaEnrichment.DATA_CHANGE_WRAP_FIELD + ".";
-
-    private final HashPartitionStrategyCrutch hashPartitioningCrutch;
-    private final StringHash stringHash;
-
-    @Autowired
-    public HashPartitionStrategy(final HashPartitionStrategyCrutch hashPartitioningCrutch,
-                                 final StringHash stringHash) {
-        this.hashPartitioningCrutch = hashPartitioningCrutch;
-        this.stringHash = stringHash;
-    }
 
     @Override
     public String calculatePartition(final EventType eventType, final JSONObject event, final List<String> partitions)
@@ -48,20 +34,13 @@ public class HashPartitionStrategy implements PartitionStrategy {
                     // The problem is that JSONObject doesn't override hashCode(). Therefore convert it to
                     // a string first and then use hashCode()
                     .map(pkf -> EventCategory.DATA.equals(eventType.getCategory()) ? DATA_PATH_PREFIX + pkf : pkf)
-                    .map(Try.wrap(okf -> {
-                        final String fieldValue = traversableJsonEvent.get(okf).toString();
-                        return stringHash.hashCode(fieldValue);
-                    }))
+                    .map(Try.wrap(okf -> traversableJsonEvent.get(okf).toString().hashCode()))
                     .map(Try::getOrThrow)
                     .mapToInt(hc -> hc)
                     .sum();
 
-
-            int partitionIndex = abs(hashValue) % partitions.size();
-            partitionIndex = hashPartitioningCrutch.adjustPartitionIndex(partitionIndex, partitions.size());
-
-            final List<String> sortedPartitions = partitions.stream().sorted().collect(Collectors.toList());
-            return sortedPartitions.get(partitionIndex);
+            final int partitionIndex = abs(hashValue) % partitions.size();
+            return partitions.get(partitionIndex);
 
         } catch (NakadiRuntimeException e) {
             final Exception original = e.getException();
@@ -72,5 +51,6 @@ public class HashPartitionStrategy implements PartitionStrategy {
             }
         }
     }
+
 
 }

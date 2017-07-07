@@ -1,6 +1,7 @@
 package org.zalando.nakadi.service.subscription.state;
 
 import com.codahale.metrics.Meter;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.google.common.base.Preconditions;
 import org.slf4j.LoggerFactory;
 import org.zalando.nakadi.domain.ConsumedEvent;
@@ -16,6 +17,7 @@ import org.zalando.nakadi.exceptions.NoSuchEventTypeException;
 import org.zalando.nakadi.exceptions.ServiceUnavailableException;
 import org.zalando.nakadi.metrics.MetricUtils;
 import org.zalando.nakadi.repository.EventConsumer;
+import org.zalando.nakadi.service.EventStreamWriter;
 import org.zalando.nakadi.service.subscription.model.Partition;
 import org.zalando.nakadi.service.subscription.zk.ZKSubscription;
 import org.zalando.nakadi.view.SubscriptionCursor;
@@ -35,6 +37,8 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static com.google.common.base.Charsets.UTF_8;
 
 
 class StreamingState extends State {
@@ -235,22 +239,39 @@ class StreamingState extends State {
                            final Optional<String> metadata) {
         try {
             final NakadiCursor sentOffset = offsets.get(pk).getSentOffset();
-            final SubscriptionCursor cursor = getContext().getCursorConverter().convert(
-                    sentOffset,
-                    getContext().getCursorTokenService().generateToken());
+            final String batch = serializeBatch(sentOffset, data, metadata);
 
-            final int batchSize = getContext().getWriter().writeSubscriptionBatch(
-                    getOut().getOutputStream(),
-                    cursor,
-                    data,
-                    metadata);
-
-            bytesSentMeter.mark(batchSize);
+            final byte[] batchBytes = batch.getBytes(UTF_8);
+            getOut().streamData(batchBytes);
+            bytesSentMeter.mark(batchBytes.length);
             batchesSent++;
         } catch (final IOException e) {
             getLog().error("Failed to write data to output.", e);
             shutdownGracefully("Failed to write data to output");
         }
+    }
+
+    private String serializeBatch(final NakadiCursor lastSentCursor, final List<ConsumedEvent> events,
+                                  final Optional<String> metadata)
+            throws JsonProcessingException {
+
+        final SubscriptionCursor cursor = getContext().getCursorConverter().convert(
+                lastSentCursor,
+                getContext().getCursorTokenService().generateToken());
+        final String cursorSerialized = getContext().getObjectMapper().writeValueAsString(cursor);
+
+        final StringBuilder builder = new StringBuilder()
+                .append("{\"cursor\":")
+                .append(cursorSerialized);
+        if (!events.isEmpty()) {
+            builder.append(",\"events\":[");
+            events.forEach(event -> builder.append(event.getEvent()).append(","));
+            builder.deleteCharAt(builder.length() - 1).append("]");
+        }
+        metadata.ifPresent(s -> builder.append(",\"info\":{\"debug\":\"").append(s).append("\"}"));
+
+        builder.append("}").append(EventStreamWriter.BATCH_SEPARATOR);
+        return builder.toString();
     }
 
     @Override
@@ -272,7 +293,7 @@ class StreamingState extends State {
         if (null != eventConsumer) {
             try {
                 eventConsumer.close();
-            } catch (final IOException e) {
+            } catch (IOException e) {
                 throw new NakadiRuntimeException(e);
             } finally {
                 eventConsumer = null;

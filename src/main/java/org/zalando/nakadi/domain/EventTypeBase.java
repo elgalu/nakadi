@@ -54,9 +54,6 @@ public class EventTypeBase {
     @Valid
     private EventTypeOptions options;
 
-    @Valid
-    private EventTypeAuthorization authorization;
-
     private Set<String> writeScopes;
 
     private Set<String> readScopes;
@@ -114,7 +111,6 @@ public class EventTypeBase {
         this.setWriteScopes(eventType.getWriteScopes());
         this.setReadScopes(eventType.getReadScopes());
         this.setCompatibilityMode(eventType.getCompatibilityMode());
-        this.setAuthorization(eventType.getAuthorization());
     }
 
     public String getName() {
@@ -227,14 +223,5 @@ public class EventTypeBase {
 
     public void setValidationStrategies(final List<ValidationStrategyConfiguration> validationStrategies) {
         this.validationStrategies = validationStrategies;
-    }
-
-    @Nullable
-    public EventTypeAuthorization getAuthorization() {
-        return authorization;
-    }
-
-    public void setAuthorization(final EventTypeAuthorization authorization) {
-        this.authorization = authorization;
     }
 }

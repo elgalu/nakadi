@@ -15,13 +15,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import org.zalando.nakadi.config.NakadiSettings;
-import org.zalando.nakadi.domain.Subscription;
 import org.zalando.nakadi.exceptions.NakadiException;
-import org.zalando.nakadi.exceptions.runtime.AccessDeniedException;
-import org.zalando.nakadi.repository.EventTypeRepository;
-import org.zalando.nakadi.repository.db.SubscriptionDbRepository;
 import org.zalando.nakadi.security.Client;
-import org.zalando.nakadi.service.AuthorizationValidator;
 import org.zalando.nakadi.service.BlacklistService;
 import org.zalando.nakadi.service.ClosedConnectionsCrutch;
 import org.zalando.nakadi.service.subscription.StreamParameters;
@@ -40,7 +35,6 @@ import java.io.OutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.zalando.nakadi.metrics.MetricUtils.metricNameForSubscription;
-import static org.zalando.nakadi.util.AuthorizationUtils.errorMessage;
 import static org.zalando.nakadi.util.FeatureToggleService.Feature.HIGH_LEVEL_API;
 
 @RestController
@@ -55,9 +49,6 @@ public class SubscriptionStreamController {
     private final NakadiSettings nakadiSettings;
     private final BlacklistService blacklistService;
     private final MetricRegistry metricRegistry;
-    private final SubscriptionDbRepository subscriptionDbRepository;
-    private final EventTypeRepository eventTypeRepository;
-    private final AuthorizationValidator authorizationValidator;
 
     @Autowired
     public SubscriptionStreamController(final SubscriptionStreamerFactory subscriptionStreamerFactory,
@@ -66,10 +57,7 @@ public class SubscriptionStreamController {
                                         final ClosedConnectionsCrutch closedConnectionsCrutch,
                                         final NakadiSettings nakadiSettings,
                                         final BlacklistService blacklistService,
-                                        @Qualifier("perPathMetricRegistry") final MetricRegistry metricRegistry,
-                                        final SubscriptionDbRepository subscriptionDbRepository,
-                                        final EventTypeRepository eventTypeRepository,
-                                        final AuthorizationValidator authorizationValidator) {
+                                        @Qualifier("perPathMetricRegistry") final MetricRegistry metricRegistry) {
         this.subscriptionStreamerFactory = subscriptionStreamerFactory;
         this.featureToggleService = featureToggleService;
         this.jsonMapper = objectMapper;
@@ -77,9 +65,6 @@ public class SubscriptionStreamController {
         this.nakadiSettings = nakadiSettings;
         this.blacklistService = blacklistService;
         this.metricRegistry = metricRegistry;
-        this.subscriptionDbRepository = subscriptionDbRepository;
-        this.eventTypeRepository = eventTypeRepository;
-        this.authorizationValidator = authorizationValidator;
     }
 
     private class SubscriptionOutputImpl implements SubscriptionOutput {
@@ -110,17 +95,12 @@ public class SubscriptionStreamController {
             if (!headersSent) {
                 headersSent = true;
                 try {
-                    if (ex instanceof AccessDeniedException) {
-                        writeProblemResponse(response, out, Problem.valueOf(Response.Status.FORBIDDEN,
-                                errorMessage((AccessDeniedException) ex)));
-                    }
                     if (ex instanceof NakadiException) {
                         writeProblemResponse(response, out, ((NakadiException) ex).asProblem());
                     } else {
                         writeProblemResponse(response, out, Problem.valueOf(Response.Status.SERVICE_UNAVAILABLE,
                                 "Failed to continue streaming"));
                     }
-                    out.flush();
                 } catch (final IOException e) {
                     LOG.error("Failed to write exception to response", e);
                 }
@@ -130,8 +110,10 @@ public class SubscriptionStreamController {
         }
 
         @Override
-        public OutputStream getOutputStream() {
-            return this.out;
+        public void streamData(final byte[] data) throws IOException {
+            headersSent = true;
+            out.write(data);
+            out.flush();
         }
     }
 
@@ -173,12 +155,8 @@ public class SubscriptionStreamController {
                 final StreamParameters streamParameters = StreamParameters.of(batchLimit, streamLimit, batchTimeout,
                         streamTimeout, streamKeepAliveLimit, maxUncommittedSize,
                         nakadiSettings.getDefaultCommitTimeoutSeconds(), client.getClientId());
-                final Subscription subscription = subscriptionDbRepository.getSubscription(subscriptionId);
-
-                authorizationValidator.authorizeSubscriptionRead(eventTypeRepository, client, subscription);
-
-                streamer = subscriptionStreamerFactory.build(subscription, streamParameters, output,
-                        connectionReady, blacklistService, client);
+                streamer = subscriptionStreamerFactory.build(subscriptionId, streamParameters, output,
+                        connectionReady, blacklistService);
                 streamer.stream();
             } catch (final InterruptedException ex) {
                 LOG.warn("Interrupted while streaming with " + streamer, ex);

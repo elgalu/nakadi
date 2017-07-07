@@ -30,9 +30,7 @@ public class MetadataEnrichmentStrategy implements EnrichmentStrategy {
     }
 
     private void setFlowId(final JSONObject metadata) {
-        if ("".equals(metadata.optString("flow_id"))) {
-            metadata.put("flow_id", FlowIdUtils.peek());
-        }
+        metadata.put("flow_id", FlowIdUtils.peek());
     }
 
     private void setEventTypeName(final JSONObject metadata, final EventType eventType) {

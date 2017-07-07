@@ -37,6 +37,7 @@ import org.zalando.nakadi.service.subscription.model.Partition;
 import org.zalando.nakadi.service.subscription.zk.NewZkSubscriptionClient;
 import org.zalando.nakadi.service.subscription.zk.SubscriptionClientFactory;
 import org.zalando.nakadi.service.timeline.TimelineService;
+import org.zalando.nakadi.util.FeatureToggleService;
 import static org.zalando.nakadi.utils.TestUtils.createFakeTimeline;
 import static org.zalando.nakadi.utils.TestUtils.randomUUID;
 import static org.zalando.nakadi.utils.TestUtils.randomValidEventTypeName;
@@ -115,7 +116,15 @@ public class CursorsServiceAT extends BaseAT {
         when(subscription.getEventTypes()).thenReturn(ImmutableSet.of(etName));
         final SubscriptionDbRepository subscriptionRepo = mock(SubscriptionDbRepository.class);
         when(subscriptionRepo.getSubscription(sid)).thenReturn(subscription);
-        final SubscriptionClientFactory zkSubscriptionFactory = new SubscriptionClientFactory(zkHolder, MAPPER);
+        final FeatureToggleService featureToggleService = mock(FeatureToggleService.class);
+        when(featureToggleService.isFeatureEnabled(eq(FeatureToggleService.Feature.HILA_USE_TOPOLOGY_OBJECT)))
+                .thenReturn(true);
+        final SubscriptionClientFactory zkSubscriptionFactory = new SubscriptionClientFactory(
+                zkHolder,
+                featureToggleService,
+                MAPPER,
+                timelineService
+        );
         cursorsService = new CursorsService(timelineService, subscriptionRepo, eventTypeRepository,
                 mock(NakadiSettings.class), zkSubscriptionFactory, cursorConverter);
 
